@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keepless</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>Keepless</h1>
+      <div id="header-actions" class="hidden">
+        <span id="autolock-status" class="status-badge" title="Automatische Sperre"></span>
+        <button id="btn-sync-trigger" title="Jetzt synchronisieren" class="icon-btn-header">🔄</button>
+        <button id="btn-lock" title="Tresor sperren" class="icon-btn-header">🔒</button>
+      </div>
+    </header>
+
+    <!-- VIEW: UNLOCK -->
+    <div id="view-unlock" class="view">
+      <div class="card glass center-content">
+        <h2>Willkommen zurück</h2>
+        <p class="subtext">Bitte entsperren Sie Ihren Tresor.</p>
+        <form id="form-unlock">
+          <div class="input-group">
+            <input type="password" id="input-password" placeholder="Master-Passwort" required autofocus>
+          </div>
+          <button type="submit" class="btn-primary">Tresor entsperren</button>
+          <button type="button" id="btn-biometric-unlock" class="btn-secondary mt-2 hidden">👆 Mit Touch ID
+            entsperren</button>
+          <p id="unlock-error" class="error-msg"></p>
+        </form>
+        <div class="footer-link">
+          <a href="#" id="link-setup">Passwort vergessen / Neu einrichten?</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW: SETUP/SETTINGS -->
+    <div id="view-setup" class="view hidden">
+      <div class="card glass">
+        <div class="settings-header">
+          <h2>Einstellungen</h2>
+          <button type="button" class="btn-icon-small" id="btn-cancel-setup-top" title="Schließen">✕</button>
+        </div>
+
+        <!-- Section: Security -->
+        <div class="settings-section">
+          <h3>Sicherheit</h3>
+          <div class="input-group">
+            <label for="input-autolock">Automatische Sperre</label>
+            <select id="input-autolock">
+              <option value="5">Nach 5 Minuten</option>
+              <option value="15" selected>Nach 15 Minuten</option>
+              <option value="30">Nach 30 Minuten</option>
+              <option value="60">Nach 1 Stunde</option>
+              <option value="0">Nie (Nicht empfohlen)</option>
+            </select>
+          </div>
+          <div class="input-group checkbox-group">
+            <input type="checkbox" id="input-biometrics">
+            <label for="input-biometrics">Biometrisches Entsperren (Touch ID)</label>
+          </div>
+
+          <div class="input-group checkbox-group mt-2">
+            <input type="checkbox" id="input-self-destruct-enabled">
+            <label for="input-self-destruct-enabled">Daten löschen nach fehlgeschlagenen Versuchen:</label>
+          </div>
+          <div class="input-group" style="margin-left: 28px;">
+            <input type="number" id="input-self-destruct-count" min="1" max="50" value="5" class="small-input">
+          </div>
+        </div>
+
+        <!-- Section: Cloud Sync -->
+        <div class="settings-section">
+          <h3>Synchronisation</h3>
+          <div id="sync-status-container" class="status-box">
+            <div class="status-indicator">
+              <span id="sync-dot" class="dot red"></span>
+              <span id="sync-status-text">Nicht verbunden</span>
+            </div>
+            <button id="btn-show-pair" type="button" class="btn-small btn-primary">Verbinden</button>
+          </div>
+
+          <!-- Pairing Form -->
+          <form id="form-pair" class="hidden panel-inset">
+            <p class="helper-text">Code im Dashboard unter "Team" generieren.</p>
+            <div class="input-group">
+              <input type="text" id="input-pair-code" placeholder="123-456" maxlength="6" class="code-input">
+            </div>
+            <div class="input-group">
+              <input type="text" id="input-device-name" placeholder="Gerätename (z.B. MacBook Pro)"
+                value="Chrome Extension">
+            </div>
+            <div class="btn-row">
+              <button type="submit" class="btn-primary">Koppeln</button>
+              <button type="button" id="btn-cancel-pair" class="btn-secondary">Abbrechen</button>
+            </div>
+            <div id="pair-message" class="hidden message-box"></div>
+          </form>
+
+          <!-- Connected Actions -->
+          <div id="sync-actions" class="hidden btn-row mt-2">
+            <button id="btn-force-sync" type="button" class="btn-secondary">🔄 Jetzt synchronisieren</button>
+            <button id="btn-logout" type="button" class="btn-danger-outline">Verbindung trennen</button>
+          </div>
+        </div>
+
+        <!-- Section: Data Management -->
+        <div class="settings-section">
+          <h3>Daten & Backup</h3>
+          <div class="btn-grid">
+            <button type="button" class="btn-secondary" id="btn-export">⬇️ Backup speichern</button>
+            <button type="button" class="btn-secondary" id="btn-import-trigger">⬆️ Backup laden</button>
+          </div>
+          <input type="file" id="input-import-file" accept=".json" class="hidden">
+
+          <button type="button" class="btn-text" id="btn-toggle-advanced">Erweiterte Importe anzeigen</button>
+
+          <div id="advanced-import" class="hidden mt-2 panel-inset">
+            <h4>Klartext Import (Merge)</h4>
+            <p class="helper-text">Fügt neue Einträge hinzu (kein Überschreiben).</p>
+            <button type="button" class="btn-small btn-secondary" id="btn-download-sample">Musterdatei</button>
+            <button type="button" class="btn-small btn-primary" id="btn-import-json-trigger">JSON Importieren</button>
+            <input type="file" id="input-import-json" accept=".json" class="hidden">
+          </div>
+        </div>
+
+        <!-- Section: Password Change -->
+        <div class="settings-section">
+          <h3>Master-Passwort ändern</h3>
+          <form id="form-setup">
+            <div class="input-group">
+              <input type="password" id="input-old-password" placeholder="Altes Passwort (nur bei Änderung)"
+                autocomplete="current-password">
+            </div>
+            <div class="input-group">
+              <input type="password" id="input-new-password" placeholder="Neues Passwort" required minlength="4"
+                autocomplete="new-password">
+            </div>
+            <div class="input-group">
+              <input type="password" id="input-confirm-password" placeholder="Bestätigen" required minlength="4"
+                autocomplete="new-password">
+            </div>
+            <button type="submit" class="btn-primary">Speichern</button>
+          </form>
+
+          <div class="mt-2 text-center">
+            <button type="button" id="btn-reset-vault" class="btn-text text-danger">⚠️ Tresor zurücksetzen (Daten
+              löschen)</button>
+          </div>
+        </div>
+
+        <div class="footer-actions">
+          <button type="button" class="btn-secondary" id="btn-cancel-setup">Zurück zum Tresor</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW: DASHBOARD -->
+    <div id="view-dashboard" class="view hidden">
+      <div class="actions-bar sticky-top">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="search-licenses" placeholder="Suchen..." class="search-input">
+        </div>
+        <button id="btn-trash-toggle" class="btn-icon" title="Papierkorb">🗑️</button>
+        <button id="btn-add-view" class="btn-icon" title="Neuer Eintrag">+</button>
+        <button id="btn-settings-view" class="btn-icon setting-btn" title="Einstellungen">⚙️</button>
+      </div>
+
+      <div id="license-list" class="list-container">
+        <!-- Licenses will be injected here -->
+        <div class="empty-state">
+          <div class="loader"></div>
+          <p>Lade Tresor...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW: ADD/EDIT -->
+    <div id="view-editor" class="view hidden">
+      <div class="card glass">
+        <h2 id="editor-title">Eintrag bearbeiten</h2>
+        <form id="form-editor">
+          <input type="hidden" id="edit-id">
+
+          <div class="input-group">
+            <label>Bezeichnung</label>
+            <input type="text" id="edit-name" placeholder="z.B. Adobe Creative Cloud" required autofocus>
+          </div>
+
+          <div class="input-group">
+            <label>Lizenzschlüssel / Notizen</label>
+            <textarea id="edit-value" rows="5" placeholder="Geben Sie hier Ihre Lizenzdaten ein..." required></textarea>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Speichern</button>
+            <button type="button" class="btn-secondary" id="btn-cancel-edit">Abbrechen</button>
+          </div>
+
+          <button type="button" class="btn-danger-link hidden" id="btn-delete">Eintrag löschen</button>
+        </form>
+      </div>
+    </div>
+
+  </div>
+  <script src="lib/crypto.js"></script>
+  <script src="lib/api.js"></script>
+  <script src="popup.js"></script>
+</body>
+
+</html>
