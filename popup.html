@@ -79,8 +79,11 @@
           <h3>Synchronisation</h3>
           <div id="sync-status-container" class="status-box">
             <div class="status-indicator">
-              <span id="sync-dot" class="dot red"></span>
-              <span id="sync-status-text">Nicht verbunden</span>
+              <span id="sync-badge" class="badge disconnected">Nicht verbunden</span>
+              <div style="display:flex; flex-direction:column;">
+                <span id="sync-status-text" class="muted small">Nicht verbunden</span>
+                <span id="sync-last" class="muted xsmall"></span>
+              </div>
             </div>
             <button id="btn-show-pair" type="button" class="btn-small btn-primary">Verbinden</button>
           </div>

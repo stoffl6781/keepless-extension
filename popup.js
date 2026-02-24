@@ -888,20 +888,28 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function checkSyncStatus() {
         const auth = await chrome.storage.local.get(['auth_token', 'device_name', 'last_sync']);
+        const badge = document.getElementById('sync-badge');
+        const lastEl = document.getElementById('sync-last');
+
         if (auth.auth_token) {
-            // Connected
-            syncEls.statusText.textContent = `✅ Verbunden als "${auth.device_name || 'Gerät'}"`;
+            // Connected — nicer presentation without emojis
+            syncEls.statusText.textContent = `Verbunden als "${auth.device_name || 'Gerät'}"`;
+            if (badge) { badge.classList.remove('disconnected'); badge.classList.add('connected'); badge.textContent = 'Verbunden'; }
             syncEls.btnShowPair.classList.add('hidden');
             syncEls.formPair.classList.add('hidden');
             syncEls.actions.classList.remove('hidden');
 
             if (auth.last_sync) {
                 const date = new Date(auth.last_sync).toLocaleString();
-                syncEls.statusText.textContent += `\n(Letzter Sync: ${date})`;
+                if (lastEl) lastEl.textContent = `Letzter Sync: ${date}`;
+            } else {
+                if (lastEl) lastEl.textContent = '';
             }
         } else {
             // Not Connected
             syncEls.statusText.textContent = 'Nicht verbunden.';
+            if (badge) { badge.classList.remove('connected'); badge.classList.add('disconnected'); badge.textContent = 'Nicht verbunden'; }
+            if (lastEl) lastEl.textContent = '';
             syncEls.btnShowPair.classList.remove('hidden');
             syncEls.formPair.classList.add('hidden');
             syncEls.actions.classList.add('hidden');

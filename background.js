@@ -220,7 +220,13 @@ async function ensureKeyPairAndUpload(token) {
 
         // Upload
         console.log('Uploading Public Key...');
-        await Api.updatePublicKey(token, pubSpki);
+        try {
+            await Api.updatePublicKey(token, pubSpki);
+        } catch (e) {
+            console.error('Public key upload failed', e, { tokenPresent: !!token });
+            // Rethrow so caller knows upload failed (sync should still attempt to continue)
+            throw e;
+        }
     } else {
         // Maybe upload anyway to be safe? Or check if server has it? 
         // For efficiency, let's assume if we have it locally, we uploaded it.
@@ -303,8 +309,22 @@ async function performSync() {
 
         // 2. Call API (Include device_id!)
         console.log(`Pushing ${encryptedItems.length} items...`);
-        const result = await Api.sync(auth.auth_token, encryptedItems, auth.last_sync, auth.device_id);
-        console.log('Sync Response:', result);
+        let result;
+        try {
+            result = await Api.sync(auth.auth_token, encryptedItems, auth.last_sync, auth.device_id);
+            console.log('Sync Response:', result);
+        } catch (e) {
+            // More diagnostic info for network / CORS failures
+            console.error('Api.sync failed', e, {
+                itemsCount: encryptedItems.length,
+                payloadSize: (function () {
+                    try { return new TextEncoder().encode(JSON.stringify(encryptedItems)).length; } catch (err) { return null; }
+                })(),
+                device_id: auth.device_id,
+                tokenPresent: !!auth.auth_token
+            });
+            throw e;
+        }
 
         // 3. Process Updates
         let changed = false;
