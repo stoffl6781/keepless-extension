@@ -63,6 +63,22 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
 });
 
+// --- DEBOUNCED SYNC ---
+let _syncTimer = null;
+let _syncInProgress = false;
+
+function scheduleSync(delayMs = 2000) {
+    if (_syncTimer) clearTimeout(_syncTimer);
+    _syncTimer = setTimeout(async () => {
+        _syncTimer = null;
+        const { auth_token } = await chrome.storage.local.get(['auth_token']);
+        if (!auth_token) return;
+        const session = await getSession();
+        if (!session.unlocked) return;
+        await performSync();
+    }, delayMs);
+}
+
 chrome.storage.local.get(['settings', 'biometrics_enabled'], async (res) => {
     if (res.settings && res.settings.autoLockMinutes !== undefined) {
         autoLockMinutes = parseInt(res.settings.autoLockMinutes, 10);
@@ -177,6 +193,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             if (session.unlocked) {
                 await setSession({ licenses: request.licenses });
                 updateContextMenus();
+                scheduleSync(); // Auto-sync after data changes
             }
             sendResponse({ success: true });
 
@@ -190,6 +207,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
 
         } else if (request.action === 'force_sync') {
+            const res = await performSync();
+            sendResponse(res);
+
+        } else if (request.action === 'request_sync') {
+            // Immediate sync (used after password change) — cancel debounce to avoid double-sync
+            if (_syncTimer) { clearTimeout(_syncTimer); _syncTimer = null; }
             const res = await performSync();
             sendResponse(res);
         }
@@ -260,6 +283,11 @@ async function ensureKeyPairAndUpload(token) {
 
 // --- SYNC ENGINE ---
 async function performSync() {
+    if (_syncInProgress) {
+        console.log('Sync already in progress, skipping');
+        return { success: false, error: 'Sync in progress' };
+    }
+    _syncInProgress = true;
     try {
         console.log('Starting Sync...');
         // REPLACED: sessionState with session fetched via getSession()
@@ -420,6 +448,8 @@ async function performSync() {
         }
 
         return { success: false, error: err.message };
+    } finally {
+        _syncInProgress = false;
     }
 }
 
@@ -566,4 +596,5 @@ async function handleSaveLicense(data) {
     await setSession({ licenses: session.licenses });
 
     updateContextMenus();
+    scheduleSync(); // Sync context-menu saves promptly
 }

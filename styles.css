@@ -568,3 +568,14 @@ button {
   margin-top: 8px;
   display: block;
 }
+
+.sync-recovery-hint {
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--accent);
+  line-height: 1.4;
+}

@@ -55,6 +55,23 @@ let showTrash = false;
 // --- INIT ---
 document.addEventListener('DOMContentLoaded', async () => {
 
+    // --- LIVE SYNC LISTENER ---
+    // When background sync updates encrypted_db, re-decrypt and refresh popup UI
+    chrome.storage.onChanged.addListener(async (changes, areaName) => {
+        if (areaName !== 'local' || !changes.encrypted_db || !masterPassword) return;
+        try {
+            const newEncryptedDb = changes.encrypted_db.newValue;
+            if (!newEncryptedDb) return; // DB was deleted (vault reset)
+            const jsonDb = await self.LicenseCrypto.decryptData(newEncryptedDb, masterPassword);
+            licenses = migrateData(JSON.parse(jsonDb));
+            if (!views.dashboard.classList.contains('hidden')) {
+                renderList();
+            }
+        } catch (err) {
+            console.warn('Live sync update failed (password mismatch?):', err);
+        }
+    });
+
     // --- NAV ---
     function showView(viewName) {
         Object.values(views).forEach(el => el.classList.add('hidden'));
@@ -76,6 +93,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!db.encrypted_db) {
         showView('setup');
         prepareSetupView(true); // Initial Setup Mode
+
+        // If synced, show hint to use the same password for recovery
+        const syncCheck = await chrome.storage.local.get(['auth_token']);
+        if (syncCheck.auth_token) {
+            const hint = document.createElement('div');
+            hint.className = 'sync-recovery-hint';
+            hint.innerHTML = '<strong>Hinweis:</strong> Sie sind mit der Cloud verbunden. Verwenden Sie Ihr bisheriges Master-Passwort, damit Ihre synchronisierten Daten wiederhergestellt werden können.';
+            const formSetup = document.getElementById('form-setup');
+            if (formSetup) formSetup.insertBefore(hint, formSetup.firstChild);
+        }
     } else {
         // Load Settings FIRST to have them ready for session check
         const settings = await chrome.storage.local.get(['settings', 'biometrics_enabled', 'self_destruct']);
@@ -307,10 +334,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const remaining = sd.count - fails;
 
                 if (remaining <= 0) {
-                    // WIPE!
-                    await chrome.storage.local.remove(['encrypted_db', 'settings', 'auth_token', 'failed_attempts', 'biometric_credential_id', 'biometrics_enabled']);
+                    // WIPE local vault but keep sync credentials for recovery
+                    await chrome.storage.local.remove(['encrypted_db', 'settings', 'failed_attempts', 'biometric_credential_id', 'biometrics_enabled', 'b2b_key_uploaded']);
                     await chrome.runtime.sendMessage({ action: 'lock_session' });
-                    alert('⛔️ ZU VIELE FEHLVERSUCHE.\n\nDer Tresor wurde sicherheitshalber gelöscht.');
+                    alert('⛔️ ZU VIELE FEHLVERSUCHE.\n\nDer lokale Tresor wurde gelöscht.\nIhre synchronisierten Daten können nach erneutem Einrichten wiederhergestellt werden.');
                     window.location.reload();
                     return;
                 } else {
@@ -371,14 +398,31 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!confirm('Möchten Sie das Master-Passwort wirklich ändern? Alle Daten werden neu verschlüsselt.')) return;
 
             // Re-encrypt with new password
-            masterPassword = newPw; // Update memory
-            await saveDb(); // Save with new key
+            masterPassword = newPw;
 
-            // Update Background Session so user stays logged in
-            chrome.runtime.sendMessage({
-                action: 'unlock_session',
-                password: newPw,
-                licenses: licenses
+            // Bump all timestamps so server accepts re-encrypted blobs
+            // (server ignores items with same/older client_updated_at)
+            const now = new Date().toISOString();
+            licenses.forEach(lic => { lic.updated_at = now; });
+
+            await saveDb();
+
+            // Update session BEFORE sync so performSync() uses the new password
+            await new Promise(resolve => {
+                chrome.runtime.sendMessage({
+                    action: 'unlock_session',
+                    password: newPw,
+                    licenses: licenses
+                }, resolve);
+            });
+
+            // Trigger immediate sync to push re-encrypted blobs to server
+            chrome.runtime.sendMessage({ action: 'request_sync' }, (syncResult) => {
+                if (syncResult && syncResult.success) {
+                    console.log('Password change: sync completed');
+                } else {
+                    console.warn('Password change: sync failed, will retry on next alarm', syncResult);
+                }
             });
 
             alert('Passwort erfolgreich geändert!');
@@ -392,6 +436,37 @@ document.addEventListener('DOMContentLoaded', async () => {
             masterPassword = newPw;
             licenses = [];
             await saveDb();
+
+            // Initialize background session so sync can work
+            await new Promise(resolve => {
+                chrome.runtime.sendMessage({
+                    action: 'unlock_session',
+                    password: newPw,
+                    licenses: licenses
+                }, resolve);
+            });
+
+            // If already connected to sync, pull server data immediately
+            const { auth_token } = await chrome.storage.local.get(['auth_token']);
+            if (auth_token) {
+                const syncResult = await new Promise(resolve => {
+                    chrome.runtime.sendMessage({ action: 'force_sync' }, resolve);
+                });
+
+                if (syncResult && syncResult.success) {
+                    // Reload vault from encrypted_db (sync may have pulled items)
+                    try {
+                        const db = await chrome.storage.local.get(['encrypted_db']);
+                        if (db.encrypted_db) {
+                            const jsonDb = await self.LicenseCrypto.decryptData(db.encrypted_db, masterPassword);
+                            licenses = migrateData(JSON.parse(jsonDb));
+                        }
+                    } catch (err) {
+                        console.warn('Post-setup sync reload failed:', err);
+                    }
+                }
+            }
+
             showView('dashboard');
         }
     });
@@ -1022,12 +1097,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                 btnSubmit.disabled = false;
             }, 2000);
 
-            // Check if we need to upload public key (B2B)
-            // Generate key pair if not exists, then upload.
-            // For now, let's keep it simple and just do sync.
-
-            // Trigger initial sync
-            chrome.runtime.sendMessage({ action: 'force_sync' });
+            // Trigger initial sync and reload data when complete
+            chrome.runtime.sendMessage({ action: 'force_sync' }, async (syncResult) => {
+                if (syncResult && syncResult.success && masterPassword) {
+                    try {
+                        const db = await chrome.storage.local.get(['encrypted_db']);
+                        if (db.encrypted_db) {
+                            const jsonDb = await self.LicenseCrypto.decryptData(db.encrypted_db, masterPassword);
+                            licenses = migrateData(JSON.parse(jsonDb));
+                            if (!views.dashboard.classList.contains('hidden')) {
+                                renderList();
+                            }
+                        }
+                    } catch (err) {
+                        console.warn('Post-pairing data reload failed:', err);
+                    }
+                }
+            });
 
         } catch (err) {
             console.error(err);
