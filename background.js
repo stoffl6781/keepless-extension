@@ -107,7 +107,18 @@ chrome.idle.onStateChanged.addListener(async (newState) => {
 });
 
 // --- MESSAGING ---
+// Actions that are safe to accept from content scripts (web pages)
+const CONTENT_SCRIPT_ALLOWED_ACTIONS = ['save_new_license'];
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    // Block sensitive actions from content scripts to prevent password extraction
+    const isExtensionPage = !sender.tab; // popup/background have no tab; content scripts do
+    if (!isExtensionPage && !CONTENT_SCRIPT_ALLOWED_ACTIONS.includes(request.action)) {
+        console.warn('Rejected sensitive action from content script:', request.action);
+        sendResponse({ error: 'Unauthorized' });
+        return;
+    }
+
     (async () => {
         const session = await getSession();
 
