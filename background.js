@@ -200,41 +200,41 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
 
 // --- KEY MANAGEMENT ---
 async function ensureKeyPairAndUpload(token) {
-    let keys = await chrome.storage.local.get(['b2b_private_key', 'b2b_public_key']);
+    const stored = await chrome.storage.local.get([
+        'b2b_private_key', 'b2b_public_key', 'b2b_key_uploaded', 'device_id'
+    ]);
+
+    let keys = {
+        b2b_private_key: stored.b2b_private_key,
+        b2b_public_key: stored.b2b_public_key
+    };
 
     if (!keys.b2b_private_key || !keys.b2b_public_key) {
         console.log('Generating B2B Key Pair...');
         const keyPair = await self.LicenseCrypto.generateKeyPair();
 
-        // Export
         const pubSpki = await self.LicenseCrypto.exportPublicKey(keyPair.publicKey);
         const priJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
 
-        // Save
         await chrome.storage.local.set({
             b2b_private_key: priJwk,
-            b2b_public_key: pubSpki
+            b2b_public_key: pubSpki,
+            b2b_key_uploaded: false
         });
 
         keys = { b2b_private_key: priJwk, b2b_public_key: pubSpki };
+    }
 
-        // Upload
+    // Upload only if not yet uploaded (avoids overwriting other devices' keys)
+    if (!stored.b2b_key_uploaded) {
         console.log('Uploading Public Key...');
         try {
-            await Api.updatePublicKey(token, pubSpki);
+            await Api.updatePublicKey(token, keys.b2b_public_key, stored.device_id);
+            await chrome.storage.local.set({ b2b_key_uploaded: true });
         } catch (e) {
-            console.error('Public key upload failed', e, { tokenPresent: !!token });
-            // Rethrow so caller knows upload failed (sync should still attempt to continue)
-            throw e;
+            console.error('Public key upload failed', e);
+            // Don't throw - sync should continue. Key will retry on next sync.
         }
-    } else {
-        // Maybe upload anyway to be safe? Or check if server has it? 
-        // For efficiency, let's assume if we have it locally, we uploaded it.
-        // Or we can just try uploading it on every sync start (it's idempotent usually).
-        // Let's do it on sync just to be sure.
-        try {
-            await Api.updatePublicKey(token, keys.b2b_public_key);
-        } catch (e) { console.warn('Key upload failed/skipped', e); }
     }
 
     // Return Private Key object
@@ -400,6 +400,14 @@ async function performSync() {
 
     } catch (err) {
         console.error('Sync error:', err);
+
+        // Detect 401/token revoked and clear auth state for re-pairing
+        if (err.message === 'Unauthenticated') {
+            console.warn('Token revoked or expired. Clearing auth state.');
+            await chrome.storage.local.set({ auth_expired: true });
+            await chrome.storage.local.remove(['auth_token', 'last_sync']);
+        }
+
         return { success: false, error: err.message };
     }
 }

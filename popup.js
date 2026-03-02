@@ -887,14 +887,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     async function checkSyncStatus() {
-        const auth = await chrome.storage.local.get(['auth_token', 'device_name', 'last_sync']);
+        const auth = await chrome.storage.local.get(['auth_token', 'device_name', 'last_sync', 'auth_expired']);
         const badge = document.getElementById('sync-badge');
         const lastEl = document.getElementById('sync-last');
 
-        if (auth.auth_token) {
+        if (auth.auth_expired) {
+            // Token was revoked or expired — prompt re-pairing
+            syncEls.statusText.textContent = 'Verbindung abgelaufen — bitte neu verbinden';
+            if (badge) {
+                badge.classList.remove('connected');
+                badge.classList.add('disconnected');
+                badge.textContent = 'Abgelaufen';
+                badge.style.borderColor = 'rgba(251,146,60,0.4)';
+                badge.style.color = '#fb923c';
+            }
+            if (lastEl) lastEl.textContent = '';
+            syncEls.btnShowPair.classList.remove('hidden');
+            syncEls.formPair.classList.add('hidden');
+            syncEls.actions.classList.add('hidden');
+        } else if (auth.auth_token) {
             // Connected — nicer presentation without emojis
             syncEls.statusText.textContent = `Verbunden als "${auth.device_name || 'Gerät'}"`;
-            if (badge) { badge.classList.remove('disconnected'); badge.classList.add('connected'); badge.textContent = 'Verbunden'; }
+            if (badge) {
+                badge.classList.remove('disconnected');
+                badge.classList.add('connected');
+                badge.textContent = 'Verbunden';
+                badge.style.borderColor = '';
+                badge.style.color = '';
+            }
             syncEls.btnShowPair.classList.add('hidden');
             syncEls.formPair.classList.add('hidden');
             syncEls.actions.classList.remove('hidden');
@@ -908,7 +928,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             // Not Connected
             syncEls.statusText.textContent = 'Nicht verbunden.';
-            if (badge) { badge.classList.remove('connected'); badge.classList.add('disconnected'); badge.textContent = 'Nicht verbunden'; }
+            if (badge) {
+                badge.classList.remove('connected');
+                badge.classList.add('disconnected');
+                badge.textContent = 'Nicht verbunden';
+                badge.style.borderColor = '';
+                badge.style.color = '';
+            }
             if (lastEl) lastEl.textContent = '';
             syncEls.btnShowPair.classList.remove('hidden');
             syncEls.formPair.classList.add('hidden');
@@ -971,13 +997,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // alert('Gekoppelt! Device ID: ' + res.device_id); 
             }
 
-            // Save Token
+            // Save Token and clear expired/key flags for fresh start
             await chrome.storage.local.set({
                 auth_token: res.token,
                 device_id: res.device_id,
                 device_name: name,
                 user_info: res.user // Expecting {id, name, email}
             });
+            await chrome.storage.local.remove(['auth_expired', 'b2b_key_uploaded']);
 
             // Force background to reload storage
             chrome.runtime.sendMessage({ action: 'update_settings', settings: {} }); // Dummy call to wake up?
@@ -1028,7 +1055,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     syncEls.btnLogout.addEventListener('click', async () => {
         if (confirm('Verbindung trennen?')) {
-            await chrome.storage.local.remove(['auth_token', 'device_id', 'device_name', 'user_info', 'last_sync']);
+            await chrome.storage.local.remove([
+                'auth_token', 'device_id', 'device_name', 'user_info', 'last_sync',
+                'auth_expired', 'b2b_key_uploaded'
+            ]);
             checkSyncStatus();
         }
     });
@@ -1049,6 +1079,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     syncEls.btnForceSync.classList.replace('btn-primary', 'btn-secondary');
                     syncEls.btnForceSync.disabled = false;
                 }, 2000);
+            } else if (response && response.error === 'Unauthenticated') {
+                syncEls.btnForceSync.textContent = '🔌 Abgelaufen';
+                syncEls.btnForceSync.disabled = false;
+                checkSyncStatus(); // Will detect auth_expired flag and update UI
             } else {
                 syncEls.btnForceSync.textContent = '❌ Fehler';
                 alert('Sync fehlgeschlagen: ' + (response ? response.error : 'Unbekannt'));
