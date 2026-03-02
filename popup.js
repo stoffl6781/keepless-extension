@@ -91,17 +91,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     const db = await chrome.storage.local.get(['encrypted_db']);
 
     if (!db.encrypted_db) {
-        showView('setup');
-        prepareSetupView(true); // Initial Setup Mode
-
-        // If synced, show hint to use the same password for recovery
         const syncCheck = await chrome.storage.local.get(['auth_token']);
         if (syncCheck.auth_token) {
+            // Connected to cloud but no local vault — show UNLOCK view for cloud restore
+            console.log('[Keepless] No vault but connected — showing unlock for cloud restore');
+            showView('unlock');
             const hint = document.createElement('div');
             hint.className = 'sync-recovery-hint';
-            hint.innerHTML = '<strong>Hinweis:</strong> Sie sind mit der Cloud verbunden. Verwenden Sie Ihr bisheriges Master-Passwort, damit Ihre synchronisierten Daten wiederhergestellt werden können.';
-            const formSetup = document.getElementById('form-setup');
-            if (formSetup) formSetup.insertBefore(hint, formSetup.firstChild);
+            hint.innerHTML = '<strong>Cloud verbunden:</strong> Geben Sie Ihr Master-Passwort ein, um den Tresor vom Server wiederherzustellen.';
+            els.formUnlock.insertBefore(hint, els.formUnlock.firstChild);
+        } else {
+            console.log('[Keepless] No vault, no connection — showing setup');
+            showView('setup');
+            prepareSetupView(true); // Initial Setup Mode
         }
     } else {
         // Load Settings FIRST to have them ready for session check
@@ -295,7 +297,58 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function attemptUnlock(password) {
         try {
             const db = await chrome.storage.local.get(['encrypted_db']);
-            if (!db.encrypted_db) return; // Should not happen
+
+            if (!db.encrypted_db) {
+                // Cloud restore: no local vault but connected — create empty vault, sync, pull items
+                const { auth_token } = await chrome.storage.local.get(['auth_token']);
+                if (!auth_token) return; // No vault AND no connection — nothing to do
+
+                console.log('[Keepless] Cloud restore: creating empty vault and syncing...');
+                masterPassword = password;
+                licenses = [];
+
+                // Create empty encrypted vault so sync has something to work with
+                await saveDb();
+
+                // Unlock background session
+                await new Promise(resolve => {
+                    chrome.runtime.sendMessage({
+                        action: 'unlock_session', password, licenses: []
+                    }, resolve);
+                });
+
+                // Trigger immediate sync to pull items from server
+                const syncResult = await new Promise(resolve => {
+                    chrome.runtime.sendMessage({ action: 'force_sync' }, resolve);
+                });
+
+                console.log('[Keepless] Cloud restore sync result:', syncResult);
+
+                // Reload vault from what sync pulled
+                const updated = await chrome.storage.local.get(['encrypted_db']);
+                if (updated.encrypted_db) {
+                    try {
+                        const jsonDb = await self.LicenseCrypto.decryptData(updated.encrypted_db, password);
+                        licenses = migrateData(JSON.parse(jsonDb));
+                    } catch (decryptErr) {
+                        console.warn('[Keepless] Could not decrypt synced vault — wrong password?', decryptErr);
+                        masterPassword = null;
+                        licenses = [];
+                        els.unlockError.textContent = 'Falsches Passwort. Bitte verwenden Sie Ihr bisheriges Master-Passwort.';
+                        return;
+                    }
+                }
+
+                // Remove the cloud restore hint
+                const hint = els.formUnlock.querySelector('.sync-recovery-hint');
+                if (hint) hint.remove();
+
+                showView('dashboard');
+                els.unlockError.textContent = '';
+                document.getElementById('input-password').value = '';
+                await chrome.storage.local.remove(['failed_attempts']);
+                return;
+            }
 
             const jsonDb = await self.LicenseCrypto.decryptData(db.encrypted_db, password);
             let rawData = JSON.parse(jsonDb);
